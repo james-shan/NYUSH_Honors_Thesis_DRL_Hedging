@@ -23,7 +23,7 @@ class BSM(GenericOptionPriceModel):
         self.T = T
         self.dt = dt
 
-    def compute_option_price(self, n, asset_price, mode="step"):
+    def compute_option_price(self, n, asset_price, vol, mode="step"):
         if mode == "step":
             time_to_maturity = self.T - n * self.dt
         elif mode == "ttm":
@@ -42,12 +42,7 @@ class BSM(GenericOptionPriceModel):
         option_price = norm.cdf(d_1) * asset_price - norm.cdf(d_2) * PVK
         return option_price
 
-    def compute_delta_ttm(self, ttm, asset_price):
-        time_to_maturity = ttm
-        d_1 = (np.log(asset_price / self.strike_price) + (self.risk_free_interest_rate + self.volatility**2 / 2)
-               * time_to_maturity) / (self.volatility * np.sqrt(time_to_maturity))
-        delta = norm.cdf(d_1)
-        return delta
+
 
     def compute_delta(self, n, asset_price):
         time_to_maturity = self.T - n * self.dt
@@ -55,3 +50,37 @@ class BSM(GenericOptionPriceModel):
                * time_to_maturity) / (self.volatility * np.sqrt(time_to_maturity))
         delta = norm.cdf(d_1)
         return delta
+    
+
+
+    
+    
+class BSMSABR(BSM):
+    def __init__(self, strike_price, risk_free_interest_rate, T, dt, v, rho):
+        super().__init__(strike_price, risk_free_interest_rate, None, T, dt)
+        self.v = v
+        self.rho = rho
+        # must compute delta after computing option price to update volatility
+
+    def sabr_volatility(self, S,T,vol, K, r,  volvol, rho,beta=1):
+        F = S * np.exp(r * T)
+        x = (F * K) ** ((1 - beta) / 2)
+        y = (1 - beta) * np.log(F / K)
+        A = vol / (x * (1 + y**2 / 24 + y ** 4 / 1920))
+        B = 1 + T * (
+            ((1 - beta) ** 2) * (vol * vol) / (24 * x**2)
+            + rho * beta * volvol * vol / (4 * x)
+            + volvol * volvol * (2 - 3 * rho * rho) / 24
+        )
+        Phi = (volvol * x / vol) * np.log(F / K)
+        Chi = np.log((np.sqrt(1 - 2 * rho * Phi + Phi * Phi) + Phi - rho) / (1 - rho))
+
+        SABRIV = np.where(F == K, vol * B / (F ** (1 - beta)), A * B * Phi / Chi)
+        return SABRIV
+
+    def compute_option_price(self, n, asset_price, vol, mode="step"):
+        time_to_maturity = self.T - n * self.dt
+        self.volatility = self.sabr_volatility(S=asset_price, T = time_to_maturity, vol = vol, K=self.strike_price,
+                                               r=self.risk_free_interest_rate, volvol=self.v, rho=self.rho)
+        return super().compute_option_price(n, asset_price, mode)
+
